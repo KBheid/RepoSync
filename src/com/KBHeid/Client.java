@@ -2,18 +2,21 @@ package com.KBHeid;
 
 import javax.swing.*;
 import java.io.*;
-import java.net.Socket;
+import java.util.ArrayList;
 import java.util.HashMap;
 
 public class Client {
 	private static final String ENVIRONMENT = System.getenv("APPDATA");
+
+	//Someday to be config options?
 	private static final String FOLDER = "/.minecraft/mods";
 	private static final String SERVER_IP = "199.247.68.80";
 	private static final int	SERVER_PORT = 25566;
-
-	private static Socket conn;
-	private static DataOutputStream out;
-	private static DataInputStream in;
+	private static final String[] IGNORED_PREFIXES = {
+			"__",
+			"*",
+			"ignored_"
+	};
 
 	/* =============================================
 	 * =======        Window methods        ========
@@ -25,10 +28,6 @@ public class Client {
 		pane.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
 		pane.setLocationRelativeTo(null);
 		pane.pack();
-	}
-
-	private static void updateWindowToStringPrompt() {
-
 	}
 
 	private static void updateWindow(String title, String text) {
@@ -49,52 +48,11 @@ public class Client {
 	}
 
 	/* =============================================
-	 * =======      Connection methods      ========
-	 * =============================================
-	 */
-
-	private static void startConnection(String ip, int port) throws IOException {
-		conn = new Socket(ip, port);
-		in = new DataInputStream(new BufferedInputStream(conn.getInputStream()));
-		out = new DataOutputStream(new BufferedOutputStream(conn.getOutputStream()));
-	}
-
-	private static void stopConnection() throws IOException {
-		in.close();
-		out.close();
-		conn.close();
-		System.out.println("Connection Finished");
-		System.out.println("========================");
-	}
-
-	private static void sendString(DataOutputStream out, String str) throws IOException{
-		out.writeUTF(str);
-		out.flush();
-	}
-
-	private static void readFile(DataInputStream in) throws IOException {
-		//getting the name and length of the file being sent
-		String fileName = readString(in);
-		System.out.println("\t" + fileName);
-		int lenOfFile = in.readInt();
-		byte[] fileBytes = new byte[8192];
-
-		//setting up a file writer
-		FileOutputStream fileWriter = new FileOutputStream(ENVIRONMENT + FOLDER + "/" + fileName);
-
-		//getting file from server
-		int count;
-		while (lenOfFile > 0 && (count = in.read(fileBytes, 0, Math.min(fileBytes.length, lenOfFile))) != -1) {
-			fileWriter.write(fileBytes,0,count);
-			lenOfFile -= count;
-		}
-	}
-
-	/* =============================================
 	 * =======         Main methods         ========
 	 * =============================================
 	 */
 	private static File[] modList;
+
 	private static HashMap<String, File> fileMap = new HashMap<>();
 
 	private static JFrame pane;
@@ -114,8 +72,7 @@ public class Client {
 
 		assert modList != null;
 		for (File f : modList) {
-			// Ignore files that start with __
-			if (!f.getName().startsWith("__")) {
+			if (!isIgnoredFile(f)) {
 				fileMap.put(f.getName(), f);
 			}
 		}
@@ -139,56 +96,68 @@ public class Client {
 
 	private static void connect() throws IOException {
 		System.out.println("========================");
-		startConnection(SERVER_IP, SERVER_PORT);
+		SharedConnectionManager.startConnection(SERVER_IP, SERVER_PORT);
 		System.out.println("Connected");
 
 		updateWindow("Connected, installing files.");
 
 		//sending the number of files
 		assert modList != null;
-		out.writeInt(modList.length);
-		out.flush();
+		SharedConnectionManager.sendInt(modList.length);
 
+		// Send all checked files
 		System.out.println(modList.length + " Mod(s) Installed: ");
 		for (File f : modList) {
-			//showing what mods they currently have
-			String filename = f.getName();
-
-			//sending file name
-			sendString(out, filename);
-			System.out.println("\t" + f.getName());
+			SharedConnectionManager.sendFile(f);
 		}
 
-		//getting number of files that are going to be sent
-		int numOfFiles;
-		numOfFiles = in.read();
+		// Getting number of files that are going to be received
+		int numOfFiles = SharedConnectionManager.readInt();
 		System.out.println("Number of files being transferred: " + numOfFiles);
 
-		//start receiving files and writing them
+		// Start receiving files and writing them
+		updateWindow("Downloading", "Preparing to download files");
 		for(int i=0; i< numOfFiles; i++){
-			readFile(in);
+			SharedConnectionManager.readFile(ENVIRONMENT + FOLDER);
 		}
 
-		//receive number of files that need to be deleted
-		int numOfDelFiles = in.readInt();
+		// Delete files that aren't on the server
+		// and generate a message
+		String deleteMessage = deleteFiles();
 
-		//delete files that aren't on the server
+		updateWindow("Finished", deleteMessage);
+		SharedConnectionManager.stopConnection();
+	}
+
+	private static String deleteFiles() throws IOException {
+		//receive number of files that need to be deleted
+		int numOfDelFiles = SharedConnectionManager.readInt();
+
+		ArrayList<String> deletedFiles = new ArrayList<>();
 		System.out.println("Deleting " + numOfDelFiles + " file(s): " );
 		for(int i=0; i< numOfDelFiles; i++){
-			String s = readString(in);
-			System.out.println("\t" + s);
-			File f = fileMap.get(s);
-			fileMap.remove(s);
+			String filename = SharedConnectionManager.readString();
+			System.out.println("\t" + filename);
+			File f = fileMap.get(filename);
+			fileMap.remove(filename);
 			f.delete();
+			deletedFiles.add(filename);
 		}
 
 		// Update the window and then stop the connection
-		updateWindow("Finished", "All files downloaded");
-		stopConnection();
+		StringBuilder returnBuilder = new StringBuilder("All files downloaded. The following files have been removed:\n");
+		for (String s : deletedFiles)
+			returnBuilder.append("\t").append(s).append("\n");
+
+		return returnBuilder.toString();
 	}
 
-	private static String readString(DataInputStream in) throws IOException {
-		return in.readUTF();
+	//Check if a file is ignored in our IGNORED_PREFIXES list.
+	private static boolean isIgnoredFile(File f) {
+		for (String s : IGNORED_PREFIXES)
+			if (!f.getName().startsWith(s))
+				return true;
+		return false;
 	}
 
 
