@@ -1,8 +1,0 @@
-<component name="ArtifactManager">
-  <artifact type="jar" name="autoUpdateServer:jar">
-    <output-path>$PROJECT_DIR$/out/artifacts/autoUpdateServer_jar</output-path>
-    <root id="archive" name="autoUpdateServer.jar">
-      <element id="module-output" name="auto_update_mods" />
-    </root>
-  </artifact>
-</component>

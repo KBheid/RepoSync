@@ -3,11 +3,12 @@ package com.KBHeid;
 import javax.swing.*;
 import java.io.*;
 import java.net.Socket;
+import java.security.MessageDigest;
 import java.util.HashMap;
 
 public class Client {
-	private static final String ENVIRONMENT = System.getenv("APPDATA");
-	private static final String FOLDER = "/.minecraft/mods";
+	private static final String ENVIRONMENT = ""; // for minecraft use: System.getenv("APPDATA");
+	private static final String FOLDER = "";
 	private static final String SERVER_IP = "199.247.68.80";
 	private static final int	SERVER_PORT = 25566;
 
@@ -192,7 +193,7 @@ public class Client {
 	}
 
 
-	/*private static String getFileChecksum(MessageDigest digest, File file) throws IOException {
+	private static String getFileChecksum(MessageDigest digest, File file) throws IOException {
 		//Get file input stream for reading the file content
 		FileInputStream fis = new FileInputStream(file);
 
@@ -220,5 +221,5 @@ public class Client {
 
 		//return complete hash
 		return sb.toString();
-	}*/
+	}
 }
