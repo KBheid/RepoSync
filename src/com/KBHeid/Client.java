@@ -1,15 +1,16 @@
-package com.KBHeid;
+package KBHeid;
 
 import javax.swing.*;
 import java.io.*;
 import java.net.Socket;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 
 public class Client {
 	private static final String ENVIRONMENT = ""; // for minecraft use: System.getenv("APPDATA");
-	private static final String FOLDER = "";
-	private static final String SERVER_IP = "199.247.68.80";
+	private static final String FOLDER = "C:/Users/dstro/Desktop/ClientTestFolder/";
+	private static final String SERVER_IP = "192.168.0.20";
 	private static final int	SERVER_PORT = 25566;
 
 	private static Socket conn;
@@ -91,12 +92,17 @@ public class Client {
 		}
 	}
 
+	private static void getFiles(File folder){
+		
+	}
+
 	/* =============================================
 	 * =======         Main methods         ========
 	 * =============================================
 	 */
 	private static File[] modList;
 	private static HashMap<String, File> fileMap = new HashMap<>();
+	private static HashMap<String, File> checksumMap = new HashMap<>();
 
 	private static JFrame pane;
 
@@ -112,6 +118,7 @@ public class Client {
 
 		//making and populating a hashmap of files
 		fileMap = new HashMap<>();
+		checksumMap = new HashMap<>();
 
 		assert modList != null;
 		for (File f : modList) {
@@ -152,17 +159,26 @@ public class Client {
 
 		System.out.println(modList.length + " Mod(s) Installed: ");
 		for (File f : modList) {
-			//showing what mods they currently have
-			String filename = f.getName();
+			//String filename = f.getName();
 
 			//sending file name
-			sendString(out, filename);
+			//sendString(out, filename);
+
+			String fileChecksum = getFileChecksum(f);
+
+			checksumMap.put(getFileChecksum(f), f);
+
+			//send checksum
+			sendString(out, fileChecksum);
+
+			//showing what mods they currently have
 			System.out.println("\t" + f.getName());
+			System.out.println("\t" + fileChecksum);
 		}
 
 		//getting number of files that are going to be sent
 		int numOfFiles;
-		numOfFiles = in.read();
+		numOfFiles = in.readInt();
 		System.out.println("Number of files being transferred: " + numOfFiles);
 
 		//start receiving files and writing them
@@ -178,8 +194,8 @@ public class Client {
 		for(int i=0; i< numOfDelFiles; i++){
 			String s = readString(in);
 			System.out.println("\t" + s);
-			File f = fileMap.get(s);
-			fileMap.remove(s);
+			File f = checksumMap.get(s);
+			checksumMap.remove(s);
 			f.delete();
 		}
 
@@ -193,7 +209,15 @@ public class Client {
 	}
 
 
-	private static String getFileChecksum(MessageDigest digest, File file) throws IOException {
+	private static String getFileChecksum(File file) throws IOException {
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-1");
+		} catch (NoSuchAlgorithmException e) {
+			e.printStackTrace();
+			return null;
+		}
+
 		//Get file input stream for reading the file content
 		FileInputStream fis = new FileInputStream(file);
 
