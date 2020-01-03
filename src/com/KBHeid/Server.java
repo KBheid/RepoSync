@@ -1,16 +1,16 @@
-package com.KBHeid;
+package KBHeid;
 
+import javax.swing.JFileChooser;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Objects;
 
 public class Server {
-
-	private static final String ENVIRONMENT = System.getenv("APPDATA");
-	private static final String FOLDER = "/.minecraft/mods";
 	private static final int 	PORT = 25566;
 
 	//Helpers
@@ -22,8 +22,8 @@ public class Server {
 		out.writeUTF(str);
 	}
 
-	private static void sendFile(DataOutputStream out, File file) throws  IOException {
-		sendString(out, file.getName());
+	private static void sendFile(DataOutputStream out, File file, String path) throws  IOException {
+		sendString(out, path + "/" + file.getName());
 		int fileBytes = (int) file.length();
 		out.writeInt(fileBytes);
 
@@ -37,89 +37,159 @@ public class Server {
 		out.flush();
 	}
 
-	private static File[] listOfFiles;
-	private static ServerSocket serverSocket;
+	private static File getDirToSync(){
+		JFileChooser chooser = new JFileChooser();
+		chooser.setCurrentDirectory(new File(".."));
+		chooser.setDialogTitle("Choose a Directory to sync");
+		chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+		chooser.setAcceptAllFileFilterUsed(false);
 
+		if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+			return chooser.getSelectedFile();
+		}
+		return null;
+	}
+
+	private static ServerSocket serverSocket;
+	private static File folder;
+
+	//TODO: Set up functionality to run in background(continuously)
+	//TODO: Set up functionality for syncing things as directories
     public static void main(String[] args) throws IOException, NoSuchAlgorithmException {
-		File folder = new File(ENVIRONMENT + FOLDER);
-		listOfFiles = folder.listFiles();
+		folder = getDirToSync();
 
 		serverSocket = new ServerSocket(PORT);
 
 		//Get the first connection
-		while (true) {
-			connect();
-		}
+		connect();
 	}
 
 	private static void connect() throws IOException {
-    	System.out.println("Awaiting client connection...");
-		ArrayList<String> unmatchedClientFiles = new ArrayList<>();
-
-		HashMap<String, File> fileMap = new HashMap<>();
-
-		assert listOfFiles != null;
-		for (File f : listOfFiles) {
-			fileMap.put(f.getName(), f);
+		while (true) {
+			System.out.println("Awaiting client connection...");
+			Socket clientSocket = serverSocket.accept();
+			Thread t = new Thread(new Connection(clientSocket));
+			t.start();
 		}
-
-		Socket clientSocket = serverSocket.accept();
-		System.out.println("\n========  Connection from " + clientSocket.getRemoteSocketAddress() + "  ========\n");
-
-		DataInputStream in = new DataInputStream(new BufferedInputStream(clientSocket.getInputStream()));
-		DataOutputStream out = new DataOutputStream(new BufferedOutputStream(clientSocket.getOutputStream()));
-
-		int clientFilesCount = in.readInt();
-
-		//Get all file names. Remove ones that match in our map
-		// All files that don't match, add to a list of files we want to remove from client
-		System.out.println("Client has files: ");
-		for (int i=0; i<clientFilesCount; i++) {
-			String fileName = readString(in);
-			System.out.println("\t" + fileName);
-
-			if (fileMap.containsKey(fileName)) {
-				fileMap.remove(fileName);
-			}
-			else {
-				unmatchedClientFiles.add(fileName);
-			}
-		}
-
-		//Send number of files that the client needs to add
-		out.write(fileMap.size());
-		out.flush();
-
-		System.out.println("Files to send: ");
-		for (String fn : fileMap.keySet()) {
-			System.out.println("\t" + fn);
-		}
-
-		//Send all files in the map
-		for (String fn : fileMap.keySet()) {
-			System.out.println("Sending file: " + fn);
-			sendFile(out, fileMap.get(fn));
-		}
-
-		//Send number of files to delete
-		out.writeInt(unmatchedClientFiles.size());
-
-		//Send all files to delete
-		System.out.println("Client is deleting files: ");
-		for (String fn : unmatchedClientFiles) {
-			System.out.println("\t" + fn);
-			out.writeUTF(fn);
-		}
-
-		out.close();
-		in.close();
-		clientSocket.close();
-		System.out.println("\n======== Connection finished ========\n");
 	}
 
-	/*
-	private static String getFileChecksum(MessageDigest digest, File file) throws IOException
-	{
+	private static class Connection implements Runnable {
+    	Socket clientSocket;
+
+    	Connection(Socket s){
+			clientSocket = s;
+		}
+
+		HashMap<String, String> clientCheckSumsToPaths = new HashMap<>();
+		HashMap<String, String> serverCheckSumsToPaths = new HashMap<>();
+
+		DataOutputStream out;
+
+		@Override
+		public void run() {
+			System.out.println("\n========  Connection from " + clientSocket.getRemoteSocketAddress() + "  ========\n");
+
+			makeChecksumToPath(folder, "");
+
+			DataInputStream in;
+			try {
+				in = new DataInputStream(new BufferedInputStream(clientSocket.getInputStream()));
+				out = new DataOutputStream(new BufferedOutputStream(clientSocket.getOutputStream()));
+
+				//get all the files sent from the client
+				while (in.readUTF().equals("FILE")){
+					String path = in.readUTF();
+					String checksum = in.readUTF();
+					clientCheckSumsToPaths.put(checksum, path);
+				}
+
+				//check their checksum and filepath to the server's
+				for (String s : clientCheckSumsToPaths.keySet()) {
+					if (Objects.equals(clientCheckSumsToPaths.get(s), serverCheckSumsToPaths.get(s)) && serverCheckSumsToPaths.containsKey(s)) {
+						clientCheckSumsToPaths.remove(s);
+						serverCheckSumsToPaths.remove(s);
+					}
+				}
+
+				sendFilesInDir(folder, ".");
+
+				out.writeUTF("END");
+
+				//Send number of files to delete
+				out.writeInt(clientCheckSumsToPaths.size());
+
+
+				//Send all files to delete
+				for (String fn : clientCheckSumsToPaths.keySet()) {
+					out.writeUTF(clientCheckSumsToPaths.get(fn));
+				}
+
+				out.close();
+				in.close();
+				clientSocket.close();
+				System.out.println("\n======== Connection finished ========\n");
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
+
+		private void makeChecksumToPath(File dir, String dirPath){
+			ArrayList<File> subDirs = new ArrayList<>();
+			for (File f : dir.listFiles()) {
+				if(f.isDirectory()){
+					subDirs.add(f);
+				}
+				else{
+					try {
+						String fChecksum = getFileChecksum(f);
+						serverCheckSumsToPaths.put(fChecksum, dirPath + "/" + f.getName());
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+			}
+			for(File f : subDirs){
+				makeChecksumToPath(f, dirPath + "/" + f.getName());
+			}
+		}
+
+		private void sendFilesInDir(File dir, String dirPath) {
+			ArrayList<File> subDirs = new ArrayList<>();
+
+			for (File f : dir.listFiles()) {
+				if(f.isDirectory()){
+					subDirs.add(f);
+				}
+				else{
+					try {
+						String fChecksum = getFileChecksum(f);
+						if(clientCheckSumsToPaths.containsKey(fChecksum)){
+							clientCheckSumsToPaths.remove(fChecksum);
+						}
+						else{
+							out.writeUTF("FILE");
+							sendFile(out, f, dirPath);
+						}
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				}
+			}
+			for(File f : subDirs){
+				sendFilesInDir(f, dirPath + "/" + f.getName());
+			}
+		}
+	}
+
+	private static String getFileChecksum(File file) throws IOException {
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-1");
+		} catch (NoSuchAlgorithmException e) {
+			e.printStackTrace();
+			return null;
+		}
+
 		//Get file input stream for reading the file content
 		FileInputStream fis = new FileInputStream(file);
 
@@ -148,5 +218,4 @@ public class Server {
 		//return complete hash
 		return sb.toString();
 	}
-	*/
 }

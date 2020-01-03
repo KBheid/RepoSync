@@ -1,0 +1,4 @@
+- Can't handle empty folders - won't update the client of the empty folder
+- folders always prefixed with slash
+- client folders are not respected
+- Server Checksums are calculated on every connection

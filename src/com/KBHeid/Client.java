@@ -1,14 +1,15 @@
-package com.KBHeid;
+package KBHeid;
 
 import javax.swing.*;
 import java.io.*;
 import java.net.Socket;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HashMap;
 
 public class Client {
-	private static final String ENVIRONMENT = System.getenv("APPDATA");
-	private static final String FOLDER = "/.minecraft/mods";
-	private static final String SERVER_IP = "199.247.68.80";
+	private static String SERVER_IP;
 	private static final int	SERVER_PORT = 25566;
 
 	private static Socket conn;
@@ -25,10 +26,6 @@ public class Client {
 		pane.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
 		pane.setLocationRelativeTo(null);
 		pane.pack();
-	}
-
-	private static void updateWindowToStringPrompt() {
-
 	}
 
 	private static void updateWindow(String title, String text) {
@@ -75,12 +72,13 @@ public class Client {
 	private static void readFile(DataInputStream in) throws IOException {
 		//getting the name and length of the file being sent
 		String fileName = readString(in);
-		System.out.println("\t" + fileName);
 		int lenOfFile = in.readInt();
 		byte[] fileBytes = new byte[8192];
 
+		File file = new File(folder + "/" + fileName);
+		file.getParentFile().mkdirs();
 		//setting up a file writer
-		FileOutputStream fileWriter = new FileOutputStream(ENVIRONMENT + FOLDER + "/" + fileName);
+		FileOutputStream fileWriter = new FileOutputStream(file);
 
 		//getting file from server
 		int count;
@@ -90,50 +88,77 @@ public class Client {
 		}
 	}
 
+	private static File getDirToSync(){
+		JFileChooser chooser = new JFileChooser();
+		chooser.setCurrentDirectory(new File(".."));
+		chooser.setDialogTitle("Choose a Directory to sync");
+		chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+		chooser.setAcceptAllFileFilterUsed(false);
+
+		if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+			return chooser.getSelectedFile();
+		}
+		return null;
+	}
+
+	private static String getIPCon(){
+		JFrame frame = new JFrame("IP Input");
+		String IP = JOptionPane.showInputDialog(frame, "Enter Server IP");
+		frame.dispose();
+		return IP;
+	}
+
 	/* =============================================
 	 * =======         Main methods         ========
 	 * =============================================
 	 */
-	private static File[] modList;
-	private static HashMap<String, File> fileMap = new HashMap<>();
+	private static HashMap<String, File> checksumMap = new HashMap<>();
+	private static File folder;
 
 	private static JFrame pane;
 
+	//TODO: Set up functionality to run in background(continuously)
+	//TODO: Set up functionality for syncing things as directories
 	public static void main(String[] args) throws IOException, InterruptedException {
-		//navigating to where the mod files live
-		String path = ENVIRONMENT + FOLDER;
+		//get what directory user wants synced
+		folder = getDirToSync();
 
-		createWindow();
-		updateWindow("Fetching files", "Getting your mods");
-
-		File folder = new File(path);
-		modList = folder.listFiles();
-
-		//making and populating a hashmap of files
-		fileMap = new HashMap<>();
-
-		assert modList != null;
-		for (File f : modList) {
-			// Ignore files that start with __
-			if (!f.getName().startsWith("__")) {
-				fileMap.put(f.getName(), f);
-			}
+		//prompt user for serverIP
+		SERVER_IP = getIPCon();
+		if(SERVER_IP.equals("")){
+			System.out.println("No IP Entered");
+			return;
 		}
 
-		updateWindow("Connecting...", "Currently connecting to server...");
+		createWindow();
 
-		// Try to connect -- if there is already a connection, wait 3 seconds before reattempting.
-		boolean notConnected = true;
-		while (notConnected) {
-			try {
-				notConnected = false;
-				updateWindow("Attempting connection...");
-				connect();
-			} catch (Exception e) {
-				notConnected = true;
-				updateWindow("System in use, retrying connection...");
-				Thread.sleep(3000);
+		updateWindow("Connecting...", "Attempting connection...");
+
+		connect();
+
+	}
+
+	private static void sendFilesInDir(File dir, String dirPath) {
+		ArrayList<File> subDirs = new ArrayList<>();
+
+		for (File f : dir.listFiles()) {
+			if(f.isDirectory()){
+				subDirs.add(f);
 			}
+			else{
+				try {
+					String fChecksum = getFileChecksum(f);
+					checksumMap.put(fChecksum, f);
+					out.writeUTF("FILE");
+					out.writeUTF(dirPath);
+					out.writeUTF(fChecksum);
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
+			}
+		}
+		for(File f : subDirs){
+			sendFilesInDir(f, dirPath + "/" + f.getName());
 		}
 	}
 
@@ -144,28 +169,13 @@ public class Client {
 
 		updateWindow("Connected, installing files.");
 
-		//sending the number of files
-		assert modList != null;
-		out.writeInt(modList.length);
+		sendFilesInDir(folder, "");
+
+		out.writeUTF("END");
 		out.flush();
 
-		System.out.println(modList.length + " Mod(s) Installed: ");
-		for (File f : modList) {
-			//showing what mods they currently have
-			String filename = f.getName();
-
-			//sending file name
-			sendString(out, filename);
-			System.out.println("\t" + f.getName());
-		}
-
-		//getting number of files that are going to be sent
-		int numOfFiles;
-		numOfFiles = in.read();
-		System.out.println("Number of files being transferred: " + numOfFiles);
-
 		//start receiving files and writing them
-		for(int i=0; i< numOfFiles; i++){
+		while (in.readUTF().equals("FILE")){
 			readFile(in);
 		}
 
@@ -173,12 +183,10 @@ public class Client {
 		int numOfDelFiles = in.readInt();
 
 		//delete files that aren't on the server
-		System.out.println("Deleting " + numOfDelFiles + " file(s): " );
 		for(int i=0; i< numOfDelFiles; i++){
 			String s = readString(in);
-			System.out.println("\t" + s);
-			File f = fileMap.get(s);
-			fileMap.remove(s);
+			File f = checksumMap.get(s);
+			checksumMap.remove(s);
 			f.delete();
 		}
 
@@ -192,13 +200,21 @@ public class Client {
 	}
 
 
-	/*private static String getFileChecksum(MessageDigest digest, File file) throws IOException {
+	private static String getFileChecksum(File file) throws IOException {
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-1");
+		} catch (NoSuchAlgorithmException e) {
+			e.printStackTrace();
+			return null;
+		}
+
 		//Get file input stream for reading the file content
 		FileInputStream fis = new FileInputStream(file);
 
 		//Create byte array to read data in chunks
 		byte[] byteArray = new byte[1024];
-		int bytesCount = 0;
+		int bytesCount;
 
 		//Read file data and update in message digest
 		while ((bytesCount = fis.read(byteArray)) != -1) {
@@ -220,5 +236,5 @@ public class Client {
 
 		//return complete hash
 		return sb.toString();
-	}*/
+	}
 }
